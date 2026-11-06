@@ -1,2 +1,2 @@
 @echo off
-python "%~dp0src\emulator.py"
+python "%~dp0src\terminal_window.py"
