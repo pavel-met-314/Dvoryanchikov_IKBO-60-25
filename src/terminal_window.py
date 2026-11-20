@@ -1,10 +1,26 @@
-
 import tkinter as tk
 
 VFS_NAME = "vfs9"
 PREFIX = f"{VFS_NAME}$ "
 MAX_LS_ARGUMENTS = 1
 REQUIRED_CD_ARGUMENTS = 1
+
+
+def command_message(command, arguments):
+    if command == "ls":
+        if len(arguments) > MAX_LS_ARGUMENTS:
+            return "Ошибка: ls принимает не более одного аргумента.\n"
+        return f"ls: аргументы = {arguments}\n"
+
+    if command == "cd":
+        if len(arguments) != REQUIRED_CD_ARGUMENTS:
+            return "Ошибка: cd ожидает ровно один аргумент.\n"
+        return f"cd: аргументы = {arguments}\n"
+
+    if command == "exit":
+        return "Ошибка: exit не принимает аргументы.\n"
+
+    return f"Ошибка: неизвестная команда {command}.\n"
 
 
 def on_enter(event):
@@ -18,23 +34,11 @@ def on_enter(event):
     if parts:
         command = parts[0]
         arguments = parts[1:]
-        if command not in ("ls", "cd", "exit"):
-            message = f"Ошибка: неизвестная команда {command}.\n"
-        elif command == "ls" and len(arguments) > MAX_LS_ARGUMENTS:
-            message = "Ошибка: ls принимает не более одного аргумента.\n"
-        elif command == "cd" and len(arguments) != REQUIRED_CD_ARGUMENTS:
-            message = "Ошибка: cd ожидает ровно один аргумент.\n"
-        elif command == "exit" and arguments:
-            message = "Ошибка: exit не принимает аргументы.\n"
-        elif command == "ls":
-            message = f"ls: аргументы = {arguments}\n"
-        elif command == "cd":
-            message = f"cd: аргументы = {arguments}\n"
-        elif command == "exit":
+        if command == "exit" and not arguments:
             window.destroy()
             return "break"
 
-        terminal.insert("end", message)
+        terminal.insert("end", command_message(command, arguments))
 
     terminal.insert("end", PREFIX)
     terminal.mark_set("insert", "end-1c")
@@ -43,7 +47,7 @@ def on_enter(event):
 
 window = tk.Tk()
 window.title("Эмулятор")
-window.geometry("900x550")  
+window.geometry("900x550")
 
 terminal = tk.Text(
     window, bg="black", fg="white", insertbackground="white",

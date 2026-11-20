@@ -57,7 +57,7 @@ def get_dependencies(repository, package):
     return dependencies
 
 
-def load_test_repository(path):
+def load_test_repository(path, root):
     repository = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(repository, dict):
         raise ValueError("тестовый репозиторий должен быть объектом JSON")
@@ -72,6 +72,9 @@ def load_test_repository(path):
             if not isinstance(dependency, str) or dependency not in repository:
                 raise ValueError(f"пакет {dependency} для {package} не описан")
 
+    if root not in repository:
+        raise ValueError(f"пакет {root} не найден в тестовом файле")
+
     return repository
 
 
@@ -82,9 +85,7 @@ def build_graph(args):
 
     test_repository = None
     if args.test_mode:
-        test_repository = load_test_repository(args.repository)
-        if args.package not in test_repository:
-            raise ValueError(f"пакет {args.package} не найден в тестовом файле")
+        test_repository = load_test_repository(args.repository, args.package)
 
     graph = {args.package: []}
 
