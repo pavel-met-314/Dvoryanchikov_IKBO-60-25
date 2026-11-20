@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import subprocess
 from http import HTTPStatus
 from pathlib import Path
 from urllib.error import HTTPError
@@ -74,16 +75,6 @@ def load_test_repository(path):
     return repository
 
 
-def reverse_graph(graph):
-    reversed_graph = {package: [] for package in graph}
-
-    for package, dependencies in graph.items():
-        for dependency in dependencies:
-            reversed_graph[dependency].append(package)
-
-    return reversed_graph
-
-
 def build_graph(args):
     excluded = args.filter
     if excluded and excluded in args.package:
@@ -94,8 +85,6 @@ def build_graph(args):
         test_repository = load_test_repository(args.repository)
         if args.package not in test_repository:
             raise ValueError(f"пакет {args.package} не найден в тестовом файле")
-        if args.reverse:
-            test_repository = reverse_graph(test_repository)
 
     graph = {args.package: []}
 
@@ -123,33 +112,78 @@ def build_graph(args):
     return graph
 
 
+def create_dot(graph):
+    lines = ["digraph dependencies {", "    rankdir=LR;"]
+    for package, dependencies in graph.items():
+        source = json.dumps(package, ensure_ascii=False)
+        lines.append(f"    {source};")
+        for dependency in dependencies:
+            target = json.dumps(dependency, ensure_ascii=False)
+            lines.append(f"    {source} -> {target};")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def save_graph(graph, filename):
+    output = Path(filename).resolve()
+    dot_file = output.with_suffix(".dot")
+    dot_file.write_text(create_dot(graph), encoding="utf-8")
+
+    try:
+        subprocess.run(
+            ["dot", "-Tpng", str(dot_file), "-o", str(output)], check=True
+        )
+    except FileNotFoundError as error:
+        raise ValueError(
+            "Graphviz не найден. Проверь команду dot -V"
+        ) from error
+
+    print(f"DOT: {dot_file}")
+    print(f"PNG: {output}")
+
+
+def print_ascii_tree(graph, root):
+    print(root)
+    shown = {root}
+
+    def print_children(package, prefix):
+        dependencies = graph[package]
+        for index, dependency in enumerate(dependencies, start=1):
+            last = index == len(dependencies)
+            branch = "\\-- " if last else "|-- "
+            repeated = dependency in shown
+            note = " [already shown]" if repeated else ""
+            print(f"{prefix}{branch}{dependency}{note}")
+            if repeated:
+                continue
+
+            shown.add(dependency)
+            padding = "    " if last else "|   "
+            print_children(dependency, prefix + padding)
+
+    print_children(root, "")
+
+
 def show_graph(parser, args):
     try:
         graph = build_graph(args)
+        if not graph:
+            print("Корневой пакет исключён фильтром")
+            return
+
+        save_graph(graph, args.output)
+        if args.ascii_tree:
+            print_ascii_tree(graph, args.package)
     except HTTPError as error:
         if error.code == HTTPStatus.NOT_FOUND:
             parser.error(f"пакет не найден: {error.url}")
         parser.error(f"реестр вернул HTTP {error.code}")
     except (OSError, ValueError) as error:
         parser.error(str(error))
+    except subprocess.CalledProcessError as error:
+        parser.error(f"Graphviz завершился с кодом {error.returncode}")
     except RecursionError:
         parser.error("граф слишком глубокий для рекурсивного обхода")
-
-    if not graph:
-        print("Корневой пакет исключён фильтром")
-        return
-
-    if args.reverse:
-        packages = list(graph)[1:]
-        if packages:
-            print(f"Зависят от {args.package}: {', '.join(packages)}")
-        else:
-            print(f"От {args.package} никто не зависит")
-        return
-
-    for package, dependencies in graph.items():
-        links = ", ".join(dependencies) if dependencies else "-"
-        print(f"{package}: {links}")
 
 
 def main():
@@ -171,14 +205,8 @@ def main():
         "--ascii-tree", action="store_true", help="Вывести ASCII-дерево"
     )
     parser.add_argument("--filter", help="Подстрока для исключения пакетов")
-    parser.add_argument(
-        "--reverse", action="store_true", help="Вывести обратные зависимости"
-    )
 
     args = parser.parse_args()
-    if args.reverse and not args.test_mode:
-        parser.error("--reverse требует --test-mode")
-
     validate_args(parser, args)
     show_graph(parser, args)
 
