@@ -47,11 +47,11 @@ def get_dependencies(repository, package):
         metadata = json.load(response)
 
     if not isinstance(metadata, dict):
-        raise ValueError("Реестр должен вернуть объект JSON")
+        raise ValueError("реестр должен вернуть объект JSON")
 
     dependencies = metadata.get("dependencies", {})
     if not isinstance(dependencies, dict):
-        raise ValueError("Поле dependencies должно быть объектом JSON")
+        raise ValueError("поле dependencies должно быть объектом JSON")
 
     return dependencies
 
@@ -66,6 +66,7 @@ def load_test_repository(path):
             raise ValueError(f"некорректное имя пакета: {package}")
         if not isinstance(dependencies, list):
             raise ValueError(f"зависимости {package} должны быть списком")
+
         for dependency in dependencies:
             if not isinstance(dependency, str) or dependency not in repository:
                 raise ValueError(f"пакет {dependency} для {package} не описан")
@@ -73,20 +74,30 @@ def load_test_repository(path):
     return repository
 
 
-def build_graph(args):
-    graph = {}
-    excluded = args.filter
+def reverse_graph(graph):
+    reversed_graph = {package: [] for package in graph}
 
+    for package, dependencies in graph.items():
+        for dependency in dependencies:
+            reversed_graph[dependency].append(package)
+
+    return reversed_graph
+
+
+def build_graph(args):
+    excluded = args.filter
     if excluded and excluded in args.package:
-        return graph
+        return {}
 
     test_repository = None
     if args.test_mode:
         test_repository = load_test_repository(args.repository)
         if args.package not in test_repository:
             raise ValueError(f"пакет {args.package} не найден в тестовом файле")
+        if args.reverse:
+            test_repository = reverse_graph(test_repository)
 
-    seen = {args.package}
+    graph = {args.package: []}
 
     def visit_layer(layer):
         next_layer = []
@@ -96,13 +107,13 @@ def build_graph(args):
             else:
                 dependencies = test_repository[package]
 
-            graph[package] = []
             for dependency in sorted(set(dependencies)):
                 if excluded and excluded in dependency:
                     continue
+
                 graph[package].append(dependency)
-                if dependency not in seen:
-                    seen.add(dependency)
+                if dependency not in graph:
+                    graph[dependency] = []
                     next_layer.append(dependency)
 
         if next_layer:
@@ -128,6 +139,14 @@ def show_graph(parser, args):
         print("Корневой пакет исключён фильтром")
         return
 
+    if args.reverse:
+        packages = list(graph)[1:]
+        if packages:
+            print(f"Зависят от {args.package}: {', '.join(packages)}")
+        else:
+            print(f"От {args.package} никто не зависит")
+        return
+
     for package, dependencies in graph.items():
         links = ", ".join(dependencies) if dependencies else "-"
         print(f"{package}: {links}")
@@ -143,9 +162,7 @@ def main():
         "--repository", required=True, help="URL или путь к тестовому файлу"
     )
     parser.add_argument(
-        "--test-mode",
-        action="store_true",
-        help="Использовать тестовый файл",
+        "--test-mode", action="store_true", help="Использовать тестовый файл"
     )
     parser.add_argument(
         "--output", default="graph.png", help="Имя файла с графом"
@@ -154,8 +171,14 @@ def main():
         "--ascii-tree", action="store_true", help="Вывести ASCII-дерево"
     )
     parser.add_argument("--filter", help="Подстрока для исключения пакетов")
+    parser.add_argument(
+        "--reverse", action="store_true", help="Вывести обратные зависимости"
+    )
 
     args = parser.parse_args()
+    if args.reverse and not args.test_mode:
+        parser.error("--reverse требует --test-mode")
+
     validate_args(parser, args)
     show_graph(parser, args)
 
