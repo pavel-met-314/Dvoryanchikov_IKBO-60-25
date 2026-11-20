@@ -1,7 +1,11 @@
 import argparse
+import json
 import re
+from http import HTTPStatus
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import urlopen
 
 
 def is_repository_url(value):
@@ -35,6 +39,44 @@ def validate_args(parser, args):
         parser.error("--filter должен содержать непустую подстроку")
 
 
+def get_dependencies(repository, package):
+    package_path = quote(package, safe="")
+    url = f"{repository.rstrip('/')}/{package_path}/latest"
+
+    with urlopen(url, timeout=10) as response:
+        metadata = json.load(response)
+
+    if not isinstance(metadata, dict):
+        raise ValueError("Реестр должен вернуть объект JSON")
+
+    dependencies = metadata.get("dependencies", {})
+    if not isinstance(dependencies, dict):
+        raise ValueError("Поле dependencies должно быть объектом JSON")
+
+    return dependencies
+
+
+def show_dependencies(parser, args):
+    if args.test_mode:
+        parser.error("чтение тестового репозитория появится на этапе 3")
+
+    try:
+        dependencies = get_dependencies(args.repository, args.package)
+    except HTTPError as error:
+        if error.code == HTTPStatus.NOT_FOUND:
+            parser.error(f"пакет {args.package} не найден")
+        parser.error(f"реестр вернул HTTP {error.code}")
+    except (OSError, ValueError) as error:
+        parser.error(f"не удалось прочитать ответ реестра: {error}")
+
+    if not dependencies:
+        print(f"У пакета {args.package} нет прямых зависимостей")
+        return
+
+    for name, version_range in sorted(dependencies.items()):
+        print(f"{name}={version_range}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Визуализация зависимостей npm-пакетов",
@@ -59,11 +101,7 @@ def main():
 
     args = parser.parse_args()
     validate_args(parser, args)
-
-    for key, value in vars(args).items():
-        if value is None:
-            value = ""
-        print(f"{key}={value}")
+    show_dependencies(parser, args)
 
 
 if __name__ == "__main__":
