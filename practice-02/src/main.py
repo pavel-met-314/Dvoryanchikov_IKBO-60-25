@@ -56,25 +56,81 @@ def get_dependencies(repository, package):
     return dependencies
 
 
-def show_dependencies(parser, args):
-    if args.test_mode:
-        parser.error("чтение тестового репозитория появится на этапе 3")
+def load_test_repository(path):
+    repository = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(repository, dict):
+        raise ValueError("тестовый репозиторий должен быть объектом JSON")
 
+    for package, dependencies in repository.items():
+        if not re.fullmatch(r"[A-Z]", package):
+            raise ValueError(f"некорректное имя пакета: {package}")
+        if not isinstance(dependencies, list):
+            raise ValueError(f"зависимости {package} должны быть списком")
+        for dependency in dependencies:
+            if not isinstance(dependency, str) or dependency not in repository:
+                raise ValueError(f"пакет {dependency} для {package} не описан")
+
+    return repository
+
+
+def build_graph(args):
+    graph = {}
+    excluded = args.filter
+
+    if excluded and excluded in args.package:
+        return graph
+
+    test_repository = None
+    if args.test_mode:
+        test_repository = load_test_repository(args.repository)
+        if args.package not in test_repository:
+            raise ValueError(f"пакет {args.package} не найден в тестовом файле")
+
+    seen = {args.package}
+
+    def visit_layer(layer):
+        next_layer = []
+        for package in layer:
+            if test_repository is None:
+                dependencies = get_dependencies(args.repository, package)
+            else:
+                dependencies = test_repository[package]
+
+            graph[package] = []
+            for dependency in sorted(set(dependencies)):
+                if excluded and excluded in dependency:
+                    continue
+                graph[package].append(dependency)
+                if dependency not in seen:
+                    seen.add(dependency)
+                    next_layer.append(dependency)
+
+        if next_layer:
+            visit_layer(next_layer)
+
+    visit_layer([args.package])
+    return graph
+
+
+def show_graph(parser, args):
     try:
-        dependencies = get_dependencies(args.repository, args.package)
+        graph = build_graph(args)
     except HTTPError as error:
         if error.code == HTTPStatus.NOT_FOUND:
-            parser.error(f"пакет {args.package} не найден")
+            parser.error(f"пакет не найден: {error.url}")
         parser.error(f"реестр вернул HTTP {error.code}")
     except (OSError, ValueError) as error:
-        parser.error(f"не удалось прочитать ответ реестра: {error}")
+        parser.error(str(error))
+    except RecursionError:
+        parser.error("граф слишком глубокий для рекурсивного обхода")
 
-    if not dependencies:
-        print(f"У пакета {args.package} нет прямых зависимостей")
+    if not graph:
+        print("Корневой пакет исключён фильтром")
         return
 
-    for name, version_range in sorted(dependencies.items()):
-        print(f"{name}={version_range}")
+    for package, dependencies in graph.items():
+        links = ", ".join(dependencies) if dependencies else "-"
+        print(f"{package}: {links}")
 
 
 def main():
@@ -101,7 +157,7 @@ def main():
 
     args = parser.parse_args()
     validate_args(parser, args)
-    show_dependencies(parser, args)
+    show_graph(parser, args)
 
 
 if __name__ == "__main__":
